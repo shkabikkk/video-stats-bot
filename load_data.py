@@ -9,13 +9,12 @@ logger = logging.getLogger(__name__)
 
 def parse_date(date_str):
     """Преобразует ISO строку в datetime без часового пояса"""
-    # Убираем Z и обрезаем микросекунды
     date_str = date_str.replace('Z', '+00:00')
     dt = datetime.fromisoformat(date_str)
-    # Убираем информацию о часовом поясе
     return dt.replace(tzinfo=None)
 
 async def load_data():
+    """Загружает данные из JSON в PostgreSQL, если таблицы пусты"""
     conn = await asyncpg.connect(
         user='postgres',
         password='postgres',
@@ -24,17 +23,26 @@ async def load_data():
     )
     
     try:
+        # Проверяем, есть ли уже данные
+        videos_count = await conn.fetchval("SELECT COUNT(*) FROM videos")
+        
+        if videos_count > 0:
+            logger.info(f"Данные уже существуют ({videos_count} видео). Загрузка пропущена.")
+            logger.info("Если нужно перезагрузить данные, сначала выполни clear_db.py")
+            return
+        
+        logger.info("База данных пуста, начинаем загрузку...")
+        
+        # Читаем JSON файл
         with open('data/videos.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
             videos = data['videos']
         
-        logger.info(f"Loaded {len(videos)} videos from JSON")
+        logger.info(f"Загружено {len(videos)} видео из JSON")
         
-        await conn.execute("TRUNCATE video_snapshots CASCADE")
-        await conn.execute("TRUNCATE videos CASCADE")
-        logger.info("Tables truncated")
-        
+        # Вставляем данные
         for video in videos:
+            # Вставляем видео
             await conn.execute("""
                 INSERT INTO videos 
                 (id, creator_id, video_created_at, views_count, likes_count, comments_count, reports_count, created_at, updated_at)
@@ -51,6 +59,7 @@ async def load_data():
                 parse_date(video['updated_at'])
             )
             
+            # Вставляем снапшоты
             snapshots_count = 0
             for snapshot in video.get('snapshots', []):
                 await conn.execute("""
@@ -75,14 +84,15 @@ async def load_data():
                 )
                 snapshots_count += 1
             
-            logger.info(f"Inserted video {video['id']} with {snapshots_count} snapshots")
+            logger.info(f"Вставлено видео {video['id']} с {snapshots_count} снапшотами")
         
+        # Проверяем результат
         videos_count = await conn.fetchval("SELECT COUNT(*) FROM videos")
         snapshots_count = await conn.fetchval("SELECT COUNT(*) FROM video_snapshots")
-        logger.info(f"Total: {videos_count} videos, {snapshots_count} snapshots")
+        logger.info(f"✅ Загрузка завершена. Всего: {videos_count} видео, {snapshots_count} снапшотов")
         
     except Exception as e:
-        logger.error(f"Error loading data: {e}")
+        logger.error(f"❌ Ошибка загрузки данных: {e}")
         raise
     finally:
         await conn.close()

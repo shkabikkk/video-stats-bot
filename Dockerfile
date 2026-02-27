@@ -11,4 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем код
 COPY . .
 
-CMD ["python", "src/bot.py"]
+# Создаем скрипт для загрузки данных при запуске
+RUN echo '#!/bin/bash\n\
+python load_data.py\n\
+exec python src/bot.py' > /video-stats-bot/start.sh && chmod +x /video-stats-bot/start.sh
+
+CMD ["/video-stats-bot/start.sh"]
