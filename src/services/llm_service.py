@@ -6,7 +6,6 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 # Промпт для генерации SQL
-# Промпт для генерации SQL
 SQL_PROMPT_TEMPLATE = """
 Ты - SQL-эксперт высшего уровня. Твоя задача - преобразовывать вопросы пользователей о статистике видео в SQL-запросы для PostgreSQL.
 ОТ ТВОЕЙ ТОЧНОСТИ ЗАВИСИТ РАБОТА ВСЕЙ СИСТЕМЫ. ДЕЙСТВУЙ ПРЕДЕЛЬНО ВНИМАТЕЛЬНО.
@@ -28,7 +27,13 @@ SQL_PROMPT_TEMPLATE = """
 - id (VARCHAR) - идентификатор среза
 - video_id (VARCHAR) - ссылка на видео (связь с таблицей videos)
 - views_count (INTEGER) - количество просмотров на момент среза
-- delta_views_count (INTEGER) - изменение просмотров за последний час (может быть 0, положительным или даже отрицательным!)
+- likes_count (INTEGER) - количество лайков на момент среза
+- comments_count (INTEGER) - количество комментариев на момент среза
+- reports_count (INTEGER) - количество жалоб на момент среза
+- delta_views_count (INTEGER) - изменение просмотров за последний час
+- delta_likes_count (INTEGER) - изменение лайков за последний час
+- delta_comments_count (INTEGER) - изменение комментариев за последний час
+- delta_reports_count (INTEGER) - изменение жалоб за последний час
 - created_at (TIMESTAMP) - время создания среза (каждый час, 24 записи в сутки)
 
 ====================================================================
@@ -72,6 +77,8 @@ SQL_PROMPT_TEMPLATE = """
 - "за всё время" = без фильтра по дате
 - "вышло" (о видео) = фильтр по video_created_at
 - "набрало больше X просмотров" = фильтр по views_count
+- **ВАЖНО: "прирост лайков", "изменение лайков", "динамика лайков", "получили лайки" = SUM(delta_likes_count) FROM video_snapshots**
+- **"всего лайков", "суммарно лайков", "сколько лайков" = SUM(likes_count) FROM videos**
 
 ====================================================================
 3. ПОДРОБНЫЕ ПРИМЕРЫ С ОБЪЯСНЕНИЯМИ
@@ -161,7 +168,7 @@ SQL: SELECT COUNT(*) FROM videos WHERE video_created_at BETWEEN '2025-11-01' AND
 SQL: SELECT SUM(views_count) FROM videos;
 
 Вопрос: "Сколько всего лайков на всех видео?"
-Объяснение: Сумма likes_count
+Объяснение: Сумма likes_count из таблицы videos
 SQL: SELECT SUM(likes_count) FROM videos;
 
 Вопрос: "Сколько видео с просмотрами больше среднего?"
@@ -188,6 +195,65 @@ SQL: SELECT COUNT(*) FROM videos;
 Объяснение: В данных таких нет, но SQL должен быть корректен
 SQL: SELECT COUNT(*) FROM videos WHERE views_count > 1000000;
 
+Вопрос: "Сколько лайков у всех видео в сумме?"
+Объяснение: Суммируем likes_count
+SQL: SELECT SUM(likes_count) FROM videos;
+
+--------------------------------------------------------------------
+3.6. ПРИМЕРЫ ДЛЯ ВСЕГО ЛАЙКОВ (ИЗ ТАБЛИЦЫ videos)
+--------------------------------------------------------------------
+
+Вопрос: "Сколько всего лайков на видео, вышедших в ноябре 2025?"
+Объяснение: "всего лайков" = финальные значения из таблицы videos
+SQL: SELECT SUM(likes_count) FROM videos WHERE video_created_at BETWEEN '2025-11-01' AND '2025-11-30';
+
+Вопрос: "Сколько лайков собрали видео 28 ноября 2025?"
+Объяснение: Сумма финальных лайков за конкретный день
+SQL: SELECT SUM(likes_count) FROM videos WHERE video_created_at::date = '2025-11-28';
+
+Вопрос: "Сколько лайков у видео креатора aca1061a9d324ecf8c3fa2bb32d7be63?"
+Объяснение: Сумма финальных лайков для конкретного креатора
+SQL: SELECT SUM(likes_count) FROM videos WHERE creator_id = 'aca1061a9d324ecf8c3fa2bb32d7be63';
+
+--------------------------------------------------------------------
+3.7. ПРИМЕРЫ ДЛЯ ПРИРОСТА ЛАЙКОВ (ИЗ ТАБЛИЦЫ video_snapshots)
+--------------------------------------------------------------------
+
+Вопрос: "Какой суммарный прирост лайков получили все видео за ноябрь 2025 года?"
+Объяснение: "прирост" = изменения по часам из таблицы snapshots
+ВАЖНО: используем delta_likes_count и created_at::date для фильтра по дате
+SQL: SELECT SUM(delta_likes_count) FROM video_snapshots WHERE created_at::date BETWEEN '2025-11-01' AND '2025-11-30';
+
+Вопрос: "На сколько лайков выросли все видео 28 ноября 2025?"
+Объяснение: Сумма изменений лайков за конкретный день
+SQL: SELECT SUM(delta_likes_count) FROM video_snapshots WHERE created_at::date = '2025-11-28';
+
+Вопрос: "Сколько лайков добавили все видео 27 ноября 2025?"
+Объяснение: Другая формулировка для прироста
+SQL: SELECT SUM(delta_likes_count) FROM video_snapshots WHERE created_at::date = '2025-11-27';
+
+Вопрос: "Сколько разных видео получали новые лайки 27 ноября 2025?"
+Объяснение: 
+1. "получали новые лайки" = delta_likes_count > 0
+2. "разные видео" = COUNT(DISTINCT video_id)
+SQL: SELECT COUNT(DISTINCT video_id) FROM video_snapshots WHERE delta_likes_count > 0 AND created_at::date = '2025-11-27';
+
+--------------------------------------------------------------------
+3.8. ЗАПРОСЫ С АГРЕГАЦИЕЙ
+--------------------------------------------------------------------
+
+Вопрос: "Среднее количество лайков на видео"
+Объяснение: AVG лайков из таблицы videos
+SQL: SELECT AVG(likes_count) FROM videos;
+
+Вопрос: "Максимальное количество лайков у одного видео"
+Объяснение: MAX лайков из таблицы videos
+SQL: SELECT MAX(likes_count) FROM videos;
+
+Вопрос: "Максимальный прирост лайков за час"
+Объяснение: MAX изменений из таблицы snapshots
+SQL: SELECT MAX(delta_likes_count) FROM video_snapshots;
+
 ====================================================================
 4. ЧАСТЫЕ ОШИБКИ, КОТОРЫХ НУЖНО ИЗБЕГАТЬ
 ====================================================================
@@ -206,6 +272,15 @@ SQL: SELECT COUNT(*) FROM videos WHERE views_count > 1000000;
 
 ❌ НЕПРАВИЛЬНО: SELECT COUNT(*) FROM video_snapshots WHERE delta_views_count > 1
 ✅ ПРАВИЛЬНО: SELECT COUNT(DISTINCT video_id) FROM video_snapshots WHERE delta_views_count > 0
+
+❌ НЕПРАВИЛЬНО: SELECT SUM(likes) FROM videos
+✅ ПРАВИЛЬНО: SELECT SUM(likes_count) FROM videos
+
+❌ НЕПРАВИЛЬНО: SELECT COUNT(*) FROM videos WHERE likes > 50
+✅ ПРАВИЛЬНО: SELECT COUNT(*) FROM videos WHERE likes_count > 50
+
+❌ **КРИТИЧЕСКАЯ ОШИБКА**: SELECT SUM(likes_count) FROM videos WHERE video_created_at BETWEEN '2025-11-01' AND '2025-11-30' ДЛЯ ВОПРОСА "прирост лайков"
+✅ **ПРАВИЛЬНО**: SELECT SUM(delta_likes_count) FROM video_snapshots WHERE created_at::date BETWEEN '2025-11-01' AND '2025-11-30'
 
 ====================================================================
 5. ТЕКУЩИЙ ВОПРОС ПОЛЬЗОВАТЕЛЯ
